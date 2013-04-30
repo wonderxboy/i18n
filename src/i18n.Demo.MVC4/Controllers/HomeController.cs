@@ -2,12 +2,11 @@
 
 namespace i18n.Demo.MVC4.Controllers
 {
-    public class HomeController : Controller
+    public class HomeController : LocalizingController
     {
         public ActionResult Index()
         {
-            ViewBag.Message = "Modify this template to jump-start your ASP.NET MVC application.";
-
+            ViewBag.Message = __("i18n string from controller"); //"Modify this template to jump-start your ASP.NET MVC application.";
             return View();
         }
 

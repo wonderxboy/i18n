@@ -3,6 +3,7 @@ using System.Web.Http;
 using System.Web.Mvc;
 using System.Web.Optimization;
 using System.Web.Routing;
+using i18n;
 
 namespace i18n.Demo.MVC4
 {
@@ -15,6 +16,8 @@ namespace i18n.Demo.MVC4
             FilterConfig.RegisterGlobalFilters(GlobalFilters.Filters);
             RouteConfig.RegisterRoutes(RouteTable.Routes);
             BundleConfig.RegisterBundles(BundleTable.Bundles);
+
+            //I18N.Register();
         }
     }
 }
