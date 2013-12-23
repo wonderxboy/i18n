@@ -46,7 +46,8 @@ namespace i18n.Domain.Concrete
 
 
 			//This means there was no languages from settings
-			if (languages.Count == 1 && languages[0] == "")
+			if (languages.Count == 0
+                || (languages.Count == 1 && languages[0] == ""))
 			{
 				//We instead check for file structure
 				DirectoryInfo di = new DirectoryInfo(GetAbsoluteLocaleDir());
@@ -84,7 +85,8 @@ namespace i18n.Domain.Concrete
 			List<string> languages = _settings.AvailableLanguages.ToList();
 
 			//This means there was no languages from settings
-			if (languages.Count == 1 && languages[0] == "")
+			if (languages.Count == 0
+                || (languages.Count == 1 && languages[0] == ""))
 			{
 				//We instead check if the file exists
 				return File.Exists(GetPathForLanguage(langtag));
@@ -107,7 +109,10 @@ namespace i18n.Domain.Concrete
 
 		public CacheDependency GetCacheDependencyForSingleLanguage(string langtag)
 		{
-			return new CacheDependency(GetPathForLanguage(langtag));
+            var path = GetPathForLanguage(langtag);
+            if (!File.Exists(path)) {
+                return null; }
+			return new CacheDependency(path);
 		}
 
 		public CacheDependency GetCacheDependencyForAllLanguages()
@@ -145,13 +150,24 @@ namespace i18n.Domain.Concrete
 
 			bool hasReferences = false;
 
+            if (!File.Exists(filePath))
+            {
+                var fileInfo = new FileInfo(filePath);
+                var dirInfo = new DirectoryInfo(Path.GetDirectoryName(filePath));
+                if (!dirInfo.Exists)
+                {
+                    dirInfo.Create();
+                }
+                fileInfo.Create().Close();
+            }
+
 			using (StreamWriter stream = new StreamWriter(filePath))
 			{
                // Establish ordering of items in PO file.
                 var orderedItems = translation.Items.Values
                     .OrderBy(x => x.References == null || x.References.Count() == 0)
                         // Non-orphan items before orphan items.
-                    .ThenBy(x => x.Id);
+                    .ThenBy(x => x.MsgKey);
                         // Then order alphanumerically.
                //
 
@@ -199,8 +215,15 @@ namespace i18n.Domain.Concrete
 
 					string prefix = hasReferences ? "" : prefix = "#~ ";
 
-                    WriteString(stream, hasReferences, "msgid", item.Id);
+                    if (_settings.MessageContextEnabledFromComment
+                        && item.ExtractedComments != null
+                        && item.ExtractedComments.Count() != 0) {
+                        WriteString(stream, hasReferences, "msgctxt", item.ExtractedComments.First());
+                    }
+
+                    WriteString(stream, hasReferences, "msgid", item.MsgId);
                     WriteString(stream, hasReferences, "msgstr", escape(item.Message));
+
                     stream.WriteLine("");
 				}
 			}
@@ -229,7 +252,18 @@ namespace i18n.Domain.Concrete
 				File.Delete(filePath);
 			}
 
-			using (StreamWriter stream = new StreamWriter(filePath))
+		    if (! File.Exists(filePath))
+		    {
+		        var fileInfo = new FileInfo(filePath);
+                var dirInfo = new DirectoryInfo(Path.GetDirectoryName(filePath));
+		        if (! dirInfo.Exists)
+		        {
+		            dirInfo.Create();
+		        }
+		        fileInfo.Create().Close();
+		    }
+
+            using (StreamWriter stream = new StreamWriter(filePath))
 			{
 				foreach (var item in items.Values)
 				{
@@ -246,7 +280,7 @@ namespace i18n.Domain.Concrete
 						stream.WriteLine("#: " + reference);
 					}
 
-					stream.WriteLine("msgid \"" + escape(item.Id) + "\"");
+					stream.WriteLine("msgid \"" + escape(item.MsgId) + "\"");
 					stream.WriteLine("");
 				}
 			}
@@ -287,78 +321,81 @@ namespace i18n.Domain.Concrete
 
 			string path = GetPathForLanguage(langtag);
 
-			using (var fs = File.OpenText(path))
-			{
-				// http://www.gnu.org/s/hello/manual/gettext/PO-Files.html
+            if (File.Exists(path)) {
 
-				string line;
-				bool itemStarted = false;
-				while ((line = fs.ReadLine()) != null)
-				{
-					List<string> extractedComments = new List<string>();
-					List<string> translatorComments = new List<string>();
-					List<string> flags = new List<string>();
-					List<string> references = new List<string>();
+			    using (var fs = File.OpenText(path))
+			    {
+				    // http://www.gnu.org/s/hello/manual/gettext/PO-Files.html
 
-					//read all comments, flags and other descriptive items for this string
-					//if we have #~ its a historical/log entry but it is the messageID/message so we skip this do/while
-					if (line.StartsWith("#") && !line.StartsWith("#~"))
-					{
-						do
-						{
-							itemStarted = true;
-							switch (line[1])
-							{
-								case '.': //Extracted comments
-									extractedComments.Add(line.Substring(2).Trim());
-									break;
-								case ':': //references
-									references.Add(line.Substring(2).Trim());
-									break;
-								case ',': //flags
-									flags.Add(line.Substring(2).Trim());
-									break;
-								case '|': //msgid previous-untranslated-string - NOT used by us
-									break;
-								default: //translator comments
-									translatorComments.Add(line.Substring(1).Trim());
-									break;
-							}
+				    string line;
+				    bool itemStarted = false;
+				    while ((line = fs.ReadLine()) != null)
+				    {
+					    List<string> extractedComments = new List<string>();
+					    List<string> translatorComments = new List<string>();
+					    List<string> flags = new List<string>();
+					    List<string> references = new List<string>();
 
-						} while ((line = fs.ReadLine()) != null && line.StartsWith("#"));
-					}
+					    //read all comments, flags and other descriptive items for this string
+					    //if we have #~ its a historical/log entry but it is the messageID/message so we skip this do/while
+					    if (line.StartsWith("#") && !line.StartsWith("#~"))
+					    {
+						    do
+						    {
+							    itemStarted = true;
+							    switch (line[1])
+							    {
+								    case '.': //Extracted comments
+									    extractedComments.Add(line.Substring(2).Trim());
+									    break;
+								    case ':': //references
+									    references.Add(line.Substring(2).Trim());
+									    break;
+								    case ',': //flags
+									    flags.Add(line.Substring(2).Trim());
+									    break;
+								    case '|': //msgid previous-untranslated-string - NOT used by us
+									    break;
+								    default: //translator comments
+									    translatorComments.Add(line.Substring(1).Trim());
+									    break;
+							    }
 
-					if (itemStarted || line.StartsWith("#~"))
-					{
-						TranslationItem item = ParseBody(fs, line);
+						    } while ((line = fs.ReadLine()) != null && line.StartsWith("#"));
+					    }
 
-                        if (item != null) {
-                           //
-					        item.TranslatorComments = translatorComments;
-					        item.ExtractedComments = extractedComments;
-					        item.Flags = flags;
-					        item.References = references;
-                           //
-                            items.AddOrUpdate(
-                                item.Id, 
-                                // Add routine.
-                                k => {
-			                        return item;
-                                },
-                                // Update routine.
-                                (k, v) => {
-                                    v.References = v.References.Append(item.References);
-                                    v.ExtractedComments = v.ExtractedComments.Append(item.References);
-                                    v.TranslatorComments = v.TranslatorComments.Append(item.References);
-                                    v.Flags = v.Flags.Append(item.References);
-                                    return v;
-                                });
-                        }
-					}
+					    if (itemStarted || line.StartsWith("#~"))
+					    {
+						    TranslationItem item = ParseBody(fs, line, extractedComments);
 
-					itemStarted = false;
-				}
-			}
+                            if (item != null) {
+                               //
+					            item.TranslatorComments = translatorComments;
+					            item.ExtractedComments = extractedComments;
+					            item.Flags = flags;
+					            item.References = references;
+                               //
+                                items.AddOrUpdate(
+                                    item.MsgKey, 
+                                    // Add routine.
+                                    k => {
+			                            return item;
+                                    },
+                                    // Update routine.
+                                    (k, v) => {
+                                        v.References = v.References.Append(item.References);
+                                        v.ExtractedComments = v.ExtractedComments.Append(item.References);
+                                        v.TranslatorComments = v.TranslatorComments.Append(item.References);
+                                        v.Flags = v.Flags.Append(item.References);
+                                        return v;
+                                    });
+                            }
+					    }
+
+					    itemStarted = false;
+				    }
+			    }
+            }
 			translation.Items = items;
 			return translation;
 		}
@@ -387,16 +424,24 @@ namespace i18n.Domain.Concrete
 		/// Parses the body of a PO file item. That is to say the message id and the message itself.
 		/// Reason for why it must be on second line (textreader) is so that you can read until you have read to far without peek previously for meta data.
 		/// </summary>
-		/// <param name="fs">A textreader that must be on the second line of a Message id</param>
-		/// <param name="line">The first line of the message id.</param>
-		/// <returns>Returns a TranslationITem with only id and message set</returns>
-		private TranslationItem ParseBody(TextReader fs, string line)
+		/// <param name="fs">A textreader that must be on the second line of a message body</param>
+		/// <param name="line">The first line of the message body.</param>
+		/// <returns>Returns a TranslationItem with only key, id and message set</returns>
+		private TranslationItem ParseBody(TextReader fs, string line, List<string> extractedComments)
 		{
 			if (string.IsNullOrEmpty(line)) {
                 return null; }
 
-            TranslationItem message = new TranslationItem { Id = "" };
+            TranslationItem message = new TranslationItem { MsgKey = "" };
 			StringBuilder sb = new StringBuilder();
+
+            string msgctxt = null;
+			line = RemoveCommentIfHistorical(line); //so that we read in removed historical records too
+			if (line.StartsWith("msgctxt"))
+			{
+				msgctxt = Unquote(line);
+				line = fs.ReadLine();
+			}
 
 			line = RemoveCommentIfHistorical(line); //so that we read in removed historical records too
 			if (line.StartsWith("msgid"))
@@ -417,7 +462,12 @@ namespace i18n.Domain.Concrete
 					}
 				}
 
-				message.Id = Unescape(sb.ToString());
+                message.MsgId = Unescape(sb.ToString());
+                
+                // If no msgctxt is set then msgkey is the msgid; otherwise it is msgid+msgctxt.
+                message.MsgKey = string.IsNullOrEmpty(msgctxt) ?
+                    message.MsgId:
+                    TemplateItem.KeyFromMsgidAndComment(message.MsgId, msgctxt, true);
 			}
 
 			sb.Clear();

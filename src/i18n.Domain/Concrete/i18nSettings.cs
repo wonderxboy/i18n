@@ -93,11 +93,11 @@ namespace i18n.Domain.Concrete
 				string setting = _settingService.GetSetting(prefixedString);
 				if (setting != null)
 				{
-					return setting.Split(';').ToList();
+					return setting.Split(';').Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
 				}
 				else if (_whiteListDefault.IsSet())
                 {
-				    return _whiteListDefault.Split(';').ToList();
+				    return _whiteListDefault.Split(';').Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
                 }
                 return new List<string>();
 			}
@@ -148,7 +148,7 @@ namespace i18n.Domain.Concrete
 				}
 
 				List<string> returnList = new List<string>();
-				foreach (var path in list)
+				foreach (var path in list.Where(x => !string.IsNullOrWhiteSpace(x)))
 				{
 					returnList.Add(MakePathAbsoluteAndFromConfigFile(path));
 				}
@@ -271,8 +271,8 @@ namespace i18n.Domain.Concrete
 		private const string _directoriesToScan = ".";
 
         /// <summary>
-        /// Specifies one or more paths to the root directory/folder of the branches
-        /// which FileNuggetParser is to scan for source files.
+        /// A semi-colon-delimited string that specifies one or more paths to the 
+        /// root directory/folder of the branches which FileNuggetParser is to scan for source files.
         /// </summary>
         /// <remarks>
         /// Each string may be an absolute (rooted) path, or a path
@@ -281,7 +281,8 @@ namespace i18n.Domain.Concrete
         /// Default value is "." which equates to the the single folder containing the 
         /// current config file (<see cref="AbstractSettingService.GetConfigFileLocation"/>).<br/>
         /// Typically, you may set to ".." equating to the solution folder for the
-        /// project containing the current config file.
+        /// project containing the current config file.<br/>
+        /// An example of a multi-path string is "c:\mywebsite;c:\mylibs\asp.net".
         /// </remarks>
 		public virtual IEnumerable<string> DirectoriesToScan
 		{
@@ -300,7 +301,7 @@ namespace i18n.Domain.Concrete
 				}
 
 				List<string> returnList = new List<string>();
-				foreach (var path in list)
+				foreach (var path in list.Where(x => !string.IsNullOrWhiteSpace(x)))
 				{
 					returnList.Add(MakePathAbsoluteAndFromConfigFile(path));
 				}
@@ -330,17 +331,45 @@ namespace i18n.Domain.Concrete
 				string setting = _settingService.GetSetting(prefixedString);
 				if (setting != null)
 				{
-					return setting.Split(';').ToList();
+					return setting.Split(';').Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
 				}
 				else
 				{
-					return _availableLanguages.Split(';').ToList();
+					return _availableLanguages.Split(';').Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
 				}
 			}
 			set
 			{
 				string prefixedString = GetPrefixedString("AvailableLanguages");
 				_settingService.SetSetting(prefixedString, string.Join(";", value));
+			}
+		}
+
+		#endregion
+
+		#region MessageContextEnabledFromComment
+
+		private bool? _cached_MessageContextEnabledFromComment;
+        public virtual bool MessageContextEnabledFromComment
+		{
+			get
+			{
+                // NB: this is not particularly thread-safe, but not seen as dangerous
+                // if done concurrently as modification is one-way.
+                if (_cached_MessageContextEnabledFromComment != null) {
+                    return _cached_MessageContextEnabledFromComment.Value; }
+
+				string prefixedString = GetPrefixedString("MessageContextEnabledFromComment");
+				string setting = _settingService.GetSetting(prefixedString);
+				bool result = !string.IsNullOrEmpty(setting) &&  setting == "true";
+                _cached_MessageContextEnabledFromComment = result;
+                return result;
+			}
+			set
+			{
+				string prefixedString = GetPrefixedString("MessageContextEnabledFromComment");
+				_settingService.SetSetting(prefixedString, value ? "true" : "false");
+                _cached_MessageContextEnabledFromComment = value;
 			}
 		}
 

@@ -42,18 +42,19 @@ namespace i18n
         /// Should no translation exist, the msgid string is returned.
         /// </remarks>
         /// <param name="context">Describes the current request.</param>
-        /// <param name="msgid">Identifies the message to be translated.</param>
+        /// <param name="msgid">Specifies the message to be translated.</param>
+        /// <param name="msgcomment">Specifies the optional message comment value of the subject resource, or null/empty.</param>
         /// <returns>Localized string, or msgid if no translation exists.</returns>
-        public static string GetText(this HttpContextBase context, string msgid)
+        public static string GetText(this HttpContextBase context, string msgid, string msgcomment)
         {
             // Lookup resource.
             LanguageTag lt;
-            msgid = LocalizedApplication.Current.TextLocalizerForApp.GetText(msgid, context.GetRequestUserLanguages(), out lt) ?? msgid;
+            msgid = LocalizedApplication.Current.TextLocalizerForApp.GetText(msgid, msgcomment, context.GetRequestUserLanguages(), out lt) ?? msgid;
             return HttpUtility.HtmlDecode(msgid);
         }
-        public static string GetText(this HttpContext context, string msgid)
+        public static string GetText(this HttpContext context, string msgid, string msgcomment)
         {
-            return context.GetHttpContextBase().GetText(msgid);
+            return context.GetHttpContextBase().GetText(msgid, msgcomment);
         }
 
         /// <summary>
@@ -132,7 +133,13 @@ namespace i18n
                 // Construct UserLanguages list and cache it for the rest of the request.
                 context.Items["i18n.UserLanguages"] 
                     = UserLanguages 
-                    = LanguageItem.ParseHttpLanguageHeader(context.Request.Headers["Accept-Language"]);
+                    = LanguageItem.ParseHttpLanguageHeader(
+                        context.Request.Headers["Accept-Language"]);
+                            // NB: originally we passed LocalizedApplication.Current.DefaultLanguageTag
+                            // here as the second parameter i.e. to specify the PAL. However, this was
+                            // found to be incorrect when operating i18n with EarlyUrlLocalization disabled,
+                            // as SetPrincipalAppLanguageForRequest was not being called, that normally
+                            // overwriting the PAL set erroneoulsy here.
             }
             return UserLanguages;
         }
@@ -174,6 +181,46 @@ namespace i18n
         public static bool SetContentLanguageHeader(this HttpContext context)
         {
             return context.GetHttpContextBase().SetContentLanguageHeader();
+        }
+
+        /// <summary>
+        /// Returns the language for the current request inferred from the request context:
+        /// that is, attributes of the request other that the URL.
+        /// </summary>
+        /// <remarks>
+        /// The language is infered from the following attributes of the request,
+        /// in order of preference:<br/>
+        ///     i18n.langtag cookie<br/>
+        ///     Accept-Language header<br/>
+        ///     fall back to i18n.LocalizedApplication.Current.DefaultLanguage<br/>
+        /// Additionally, each language is matched by the language matching algorithm
+        /// against the set of application languages available.
+        /// </remarks>
+        /// <param name="context">Context of the current request.</param>
+        /// <returns>
+        /// Returns language tag describing the inferred language.
+        /// </returns>
+        /// <exception cref="System.InvalidOperationException">
+        /// Expected GetRequestUserLanguages to fall back to default language.
+        /// </exception>
+        public static LanguageTag GetInferredLanguage(this HttpContextBase context)
+        {
+            // langtag = best match between
+            // 1. Inferred user languages (cookie and Accept-Language header)
+            // 2. App Languages.
+            LanguageTag lt = null;
+            HttpCookie cookie_langtag = context.Request.Cookies.Get("i18n.langtag");
+            if (cookie_langtag != null) {
+                lt = LanguageHelpers.GetMatchingAppLanguage(cookie_langtag.Value); }
+            if (lt == null) {
+                lt = LanguageHelpers.GetMatchingAppLanguage(context.GetRequestUserLanguages()); }
+            if (lt == null) {
+                throw new InvalidOperationException("Expected GetRequestUserLanguages to fall back to default language."); }
+            return lt;
+        }
+        public static LanguageTag GetInferredLanguage(this HttpContext context)
+        {
+            return context.GetHttpContextBase().GetInferredLanguage();
         }
 
     }

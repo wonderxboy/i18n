@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace i18n
 {
@@ -81,6 +82,15 @@ namespace i18n
         public delegate bool OutgoingUrlFilter(string url, Uri currentRequestUrl);
 
         /// <summary>
+        /// May be set to a pattern that matches the path component of any url to be 
+        /// explicitly EXCLUDED from localization, both incoming and outgoing.
+        /// </summary>
+        /// <remarks>
+        /// This filtering in performed in addition to any custom IncomingUrlFilters/OutgoingUrlFilters filters.
+        /// </remarks>
+        public static Regex QuickUrlExclusionFilter = new System.Text.RegularExpressions.Regex(@"(?:sitemap\.xml|\.css|\.jpg|\.png|\.svg|\.woff|\.eot)$");
+
+        /// <summary>
         /// Filters that examines the request URL during Early URL Localization
         /// and returns an indication as to whether the URL should be localized.
         /// </summary>
@@ -104,6 +114,12 @@ namespace i18n
 
         public bool FilterIncoming(Uri url)
         {
+            // Run through any quick exclusion filter.
+            if (QuickUrlExclusionFilter != null) {
+                if (QuickUrlExclusionFilter.Match(url.LocalPath).Success) {
+                    return false; }
+            }
+
             // Run through any filters installed.
             if (IncomingUrlFilters != null) {
                 foreach (IncomingUrlFilter filter in IncomingUrlFilters.GetInvocationList())
@@ -116,6 +132,16 @@ namespace i18n
         }
         public bool FilterOutgoing(string url, Uri currentRequestUrl)
         {
+            // Run through any quick exclusion filter.
+            if (QuickUrlExclusionFilter != null) {
+                Uri uri;
+                if (Uri.TryCreate(url, UriKind.Absolute, out uri)
+                    || Uri.TryCreate(currentRequestUrl, url, out uri)) {
+                    if (QuickUrlExclusionFilter.Match(uri.LocalPath).Success) {
+                        return false; }
+                }
+            }
+
             // Run through any filters installed.
             if (OutgoingUrlFilters != null) {
                 foreach (OutgoingUrlFilter filter in OutgoingUrlFilters.GetInvocationList())
@@ -129,13 +155,15 @@ namespace i18n
         
         public string ExtractLangTagFromUrl(string url, UriKind uriKind, bool incomingUrl, out string urlPatched)
         {
+            string siteRootPath = ExtractAnySiteRootPathFromUrl(ref url, uriKind);
+
             string result = LanguageTag.ExtractLangTagFromUrl(url, uriKind, out urlPatched);
 
             switch (UrlLocalizationScheme)
             {
                 case UrlLocalizationScheme.Scheme1:
                 {
-                    return result;
+                    break;
                 }
                 case UrlLocalizationScheme.Scheme2:
                 {
@@ -144,7 +172,7 @@ namespace i18n
                         result = LocalizedApplication.Current.DefaultLanguage;
                         urlPatched = url;
                     }
-                    return result;
+                    break;
                 }
                 case UrlLocalizationScheme.Scheme3:
                 default:
@@ -152,6 +180,13 @@ namespace i18n
                     throw new InvalidOperationException();
                 }
             }
+
+           // If site root path was trimmed from the URL above, add it back on now.
+            if (siteRootPath != null
+                && urlPatched != null) {
+                PatchSiteRootPathIntoUrl(siteRootPath, ref urlPatched, uriKind); }
+
+            return result;
         }
         public string SetLangTagInUrlPath(string url, UriKind uriKind, string langtag)
         {
@@ -169,7 +204,15 @@ namespace i18n
                 }
             }
 
-            return LanguageTag.SetLangTagInUrlPath(url, uriKind, langtag);
+            string siteRootPath = ExtractAnySiteRootPathFromUrl(ref url, uriKind);
+
+            url = LanguageTag.SetLangTagInUrlPath(url, uriKind, langtag);
+
+           // If site root path was trimmed from the URL above, add it back on now.
+            if (siteRootPath != null) {
+                PatchSiteRootPathIntoUrl(siteRootPath, ref url, uriKind); }
+
+            return url;
         }
         public string InsertLangTagIntoVirtualPath(string langtag, string virtualPath)
         {
@@ -181,5 +224,70 @@ namespace i18n
 
     #endregion
 
+    // Helpers
+
+        /// <summary>
+        /// Helper for detecting and extracting any site root path string from a URL.
+        /// </summary>
+        /// <param name="url">Subject relative url, trimmed on output if found to be prefixed with site root path.</param>
+        /// <returns>
+        /// If the site root path was found and trimmed from the url, returns the site root path string.
+        /// Otherwise, returns null.
+        /// </returns>
+        protected string ExtractAnySiteRootPathFromUrl(ref string url, UriKind uriKind)
+        {
+           // If site root path is '\' then nothing to do.
+            if (LocalizedApplication.Current.ApplicationPath == "/") {
+                return null; }
+
+           // If url is possibly absolute
+            if (uriKind != UriKind.Relative) {
+               // If absolute url (include host and optionally scheme)
+                Uri uri;
+                if (Uri.TryCreate(url, UriKind.Absolute, out uri)) {
+                    UriBuilder ub = new UriBuilder(url);
+                    string path = ub.Path;
+                    string siteRootPath = ExtractAnySiteRootPathFromUrl(ref path, UriKind.Relative);
+                   // Match?
+                    if (siteRootPath != null) {
+                        ub.Path = path;
+                        url = ub.Uri.ToString(); // Go via Uri to avoid port 80 being added.
+                        return siteRootPath;
+                    }
+                   // No match.
+                    return null;
+                }
+            }
+
+           // If url is prefixed with the site root path, trim it from the url.
+           // E.g. for site root path of "/XYZ"
+           //     /XYZ/Home/Index -> /Home/Index and we return /XYZ
+            if (url.IndexOf(LocalizedApplication.Current.ApplicationPath, 0, StringComparison.OrdinalIgnoreCase) == 0) {
+                int len = LocalizedApplication.Current.ApplicationPath.Length;
+                url = url.Substring(len, url.Length -len);
+                return LocalizedApplication.Current.ApplicationPath;
+            }
+            return null;
+        }
+
+        protected void PatchSiteRootPathIntoUrl(string siteRootPath, ref string url, UriKind uriKind)
+        {
+           // If url is possibly absolute
+            if (uriKind != UriKind.Relative) {
+               // If absolute url (include host and optionally scheme)
+                Uri uri;
+                if (Uri.TryCreate(url, UriKind.Absolute, out uri)) {
+                    UriBuilder ub = new UriBuilder(url);
+                    string path = ub.Path;
+                    PatchSiteRootPathIntoUrl(siteRootPath, ref path, UriKind.Relative);
+                    ub.Path = path;
+                    url = ub.Uri.ToString(); // Go via Uri to avoid port 80 being added.
+                    return;
+                }
+            }
+    
+           // Url is relative so just prefix path.
+            url = siteRootPath + url;
+        }
     }
 }

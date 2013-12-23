@@ -93,7 +93,7 @@ namespace i18n
         /// <param name="headerval">
         /// HTTP Accept-Language header value.
         /// http://www.w3.org/Protocols/rfc2616/rfc2616-sec14.html.
-        /// May be empty string for zero languages in which case pal MUST be non-null.
+        /// May be null or empty string for zero languages.
         /// </param>
         /// <param name="pal">
         /// Optional language to store at the first element position in the array, which is reserved
@@ -108,12 +108,8 @@ namespace i18n
         {
         // This method is designed to be as efficient as possible (avoiding string allocations where possible).
         //
-            if (null == headerval) {
-                throw new ArgumentNullException("headerval"); }
-            if (!headerval.IsSet() && pal == null) {
-                throw new ArgumentNullException("pal"); }
             int begin, end, pos1;
-            int len = headerval.Length;
+            int len = headerval != null ? headerval.Length : 0;
             int ordinal = 0;
            // Init array with enough elements for each language entry in the header.
             var LanguageItems = new LanguageItem[(len > 0 ? headerval.CountOfChar(',') + 1 : 0) + 1];
@@ -153,11 +149,14 @@ namespace i18n
                 string langtag = headerval.Substring(begin, pos1 -begin).Trim();
                // Wrap langtag.
                 LanguageTag lt = i18n.LanguageTag.GetCachedInstance(langtag);
-                if (!lt.Language.IsSet()) {
+                if (lt==null || !lt.Language.IsSet()) {
                     continue; }
                // Ignore the langtag if already added.
-                if (pal.IsValid() && pal.Equals(lt)) {
-                    continue; }
+                //if (pal.IsValid() && pal.Equals(lt)) {
+                //    continue; }
+                    // NB: the above check disabled as it can cause the first lang in the header,
+                    // where it matches the PAL intially, to be lost if/when the PAL is later changed 
+                    // to something else.
                // Store a new representative item.
                // NB: LanguageItem is a value type so no alloc done here.
                 LanguageItems[ordinal] = new LanguageItem(lt, qvalue, ordinal);

@@ -10,6 +10,7 @@ using System.Web.Caching;
 using System.Web.Hosting;
 using i18n.Domain.Abstract;
 using i18n.Domain.Entities;
+using i18n.Domain.Concrete;
 
 namespace i18n
 {
@@ -18,15 +19,20 @@ namespace i18n
     /// </summary>
     public class TextLocalizer : ITextLocalizer
     {
+        private i18nSettings _settings;
+
 	    private ITranslationRepository _translationRepository;
 
-	    public TextLocalizer(ITranslationRepository translationRepository)
+	    public TextLocalizer(
+            i18nSettings settings,
+            ITranslationRepository translationRepository)
 	    {
+            _settings = settings;
 		    _translationRepository = translationRepository;
 	    }
 
 
-	    #region [ITextLocalizer]
+	#region [ITextLocalizer]
 
         public virtual ConcurrentDictionary<string, LanguageTag> GetAppLanguages()
         {
@@ -48,6 +54,12 @@ namespace i18n
 
                // Populate the collection.
 	            List<string> languages = _translationRepository.GetAvailableLanguages().Select(x => x.LanguageShortTag).ToList();
+
+                // Ensure default language is included in AppLanguages where appropriate.
+                if (LocalizedApplication.Current.MessageKeyIsValueInDefaultLanguage
+                    && !languages.Any(x => LocalizedApplication.Current.DefaultLanguageTag.Equals(x))) {
+                    languages.Add(LocalizedApplication.Current.DefaultLanguageTag.ToString()); }
+
                 foreach (var langtag in languages)
                 {
 					if (IsLanguageValid(langtag))
@@ -61,7 +73,7 @@ namespace i18n
             }
         }
 
-        public virtual string GetText(string key, LanguageItem[] languages, out LanguageTag o_langtag, int maxPasses = -1)
+        public virtual string GetText(string msgid, string msgcomment, LanguageItem[] languages, out LanguageTag o_langtag, int maxPasses = -1)
         {
             // Validate arguments.
             if (maxPasses > (int)LanguageTag.MatchGrade._MaxMatch +1) { 
@@ -69,26 +81,36 @@ namespace i18n
             // Init.
             bool fallbackOnDefault = maxPasses == (int)LanguageTag.MatchGrade._MaxMatch +1
                 || maxPasses == -1;
+            // Determine the key for the msg lookup. This may be either msgid or msgid+msgcomment, depending on the prevalent
+            // MessageContextEnabledFromComment setting.
+            string msgkey = msgid == null ? 
+                msgid:
+                TemplateItem.KeyFromMsgidAndComment(msgid, msgcomment, _settings.MessageContextEnabledFromComment);
+            // Perform language matching based on UserLanguages, AppLanguages, and presence of
+            // resource under msgid for any particular AppLanguage.
             string text;
-            // Perform language matching based on UserLanguaes, AppLanguages, and presence of
-            // resource under key for any particular AppLanguage.
             o_langtag = LanguageMatching.MatchLists(
                 languages, 
                 GetAppLanguages(), 
-                key, 
+                msgkey, 
                 TryGetTextFor, 
                 out text, 
                 Math.Min(maxPasses, (int)LanguageTag.MatchGrade._MaxMatch));
+            // If match was successfull
             if (text != null) {
-                return text; }
-
+                // If the msgkey was returned...don't output that but rather the msgid as the msgkey
+                // may be msgid+msgcomment.
+                if (text == msgkey) {
+                    return msgid; }                
+                return text;
+            }
             // Optionally try default language.
             if (fallbackOnDefault)
             {
                 o_langtag = LocalizedApplication.Current.DefaultLanguageTag;
-                return key;
+                return msgid;
             }
-
+            //
             return null;
         }
 
@@ -105,6 +127,11 @@ namespace i18n
         {
         // Note that there is no need to serialize access to HttpRuntime.Cache when just reading from it.
         //
+            // Default language is always valid.
+            if (LocalizedApplication.Current.MessageKeyIsValueInDefaultLanguage
+                && LocalizedApplication.Current.DefaultLanguageTag.Equals(langtag)) {
+                return true; }
+
 			ConcurrentDictionary<string, TranslationItem> messages = (ConcurrentDictionary<string, TranslationItem>)HttpRuntime.Cache[GetCacheKey(langtag)];
 
             // If messages not yet loaded in for the language
@@ -118,21 +145,23 @@ namespace i18n
 
         /// <summary>
         /// Lookup whether any messages exist for the passed langtag, and if so attempts
-        /// to lookup the message for the passed key, or if the key is null returns indication
+        /// to lookup the message for the passed msgid, or if the msgid is null returns indication
         /// of whether any messages exist for the langtag.
         /// </summary>
         /// <param name="langtag">
         /// Language tag of the subject langtag.
         /// </param>
-        /// <param name="key">
-        /// Key (msgid) of the message to lookup, or null to test for any message loaded for the langtag.
+        /// <param name="msgkey">
+        /// Key of the message to lookup, or null to test for any message loaded for the langtag.
+        /// When on-null, the format of the key is as generated by the TemplateItem.KeyFromMsgidAndComment
+        /// helper.
         /// </param>
         /// <returns>
-        /// On success, returns the translated message, or if key is null returns an empty string ("")
+        /// On success, returns the translated message, or if msgkey is null returns an empty string ("")
         /// to indciate that one or more messages exist for the langtag.
         /// On failure, returns null.
         /// </returns>
-        private string TryGetTextFor(string langtag, string key)
+        private string TryGetTextFor(string langtag, string msgkey)
         {
             // If no messages loaded for language...fail.
             if (!IsLanguageValid(langtag)) {
@@ -140,13 +169,19 @@ namespace i18n
 
             // If not testing for a specific message, that is just testing whether any messages 
             // are present...return positive.
-            if (key == null) {
+            if (msgkey == null) {
                 return ""; }   
 
             // Lookup specific message text in the language PO and if found...return that.
-            string text = LookupText(langtag, key);
+            string text = LookupText(langtag, msgkey);
             if (text != null) {
                 return text; }
+
+            // If we are looking up in the default language, and the message keys describe values
+            // in that language...return the msgkey.
+            if (LocalizedApplication.Current.DefaultLanguageTag.Equals(langtag)
+                && LocalizedApplication.Current.MessageKeyIsValueInDefaultLanguage) {
+                return msgkey; }
 
             // Lookup failed.
             return null;
@@ -168,13 +203,18 @@ namespace i18n
 
 				// Cache messages.
 				// NB: if the file changes we want to be able to rebuild the index without recompiling.
-				HttpRuntime.Cache.Insert(GetCacheKey(langtag), t.Items, _translationRepository.GetCacheDependencyForSingleLanguage(langtag));
+                // NB: it is possible for GetCacheDependencyForSingleLanguage to return null in the
+                // case of the default language where it is added to AppLanguages yet doesn't actually exist.
+                // See MessageKeyIsValueInDefaultLanguage.
+                var cd = _translationRepository.GetCacheDependencyForSingleLanguage(langtag);
+				if (cd != null) {
+                    HttpRuntime.Cache.Insert(GetCacheKey(langtag), t.Items, cd); }
 			}
             return true;
         }
 
        /// <returns>null if not found.</returns>
-        private string LookupText(string langtag, string key)
+        private string LookupText(string langtag, string msgkey)
         {
         // Note that there is no need to serialize access to HttpRuntime.Cache when just reading from it.
         //
@@ -188,7 +228,7 @@ namespace i18n
 			}
 
             if (messages == null
-                || !messages.TryGetValue(key, out message)
+                || !messages.TryGetValue(msgkey, out message)
                 || !message.Message.IsSet())
             {
                 return null;

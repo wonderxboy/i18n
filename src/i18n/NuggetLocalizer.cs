@@ -3,6 +3,7 @@ using System.Web;
 using System.Text;
 using System.Text.RegularExpressions;
 using i18n.Helpers;
+using i18n.Domain.Concrete;
 
 namespace i18n
 {
@@ -11,12 +12,25 @@ namespace i18n
     /// </summary>
     public class NuggetLocalizer : INuggetLocalizer
     {
-        private ITextLocalizer m_textLocalizer;
+        private i18nSettings _settings;
+
+        private ITextLocalizer _textLocalizer;
+
+        private NuggetParser _nuggetParser;
 
         public NuggetLocalizer(
+            i18nSettings settings,
             ITextLocalizer textLocalizer)
         {
-            m_textLocalizer = textLocalizer;
+            _settings = settings;
+            _textLocalizer = textLocalizer;
+
+            _nuggetParser = new NuggetParser(new NuggetTokens(
+			    _settings.NuggetBeginToken,
+			    _settings.NuggetEndToken,
+			    _settings.NuggetDelimiterToken,
+			    _settings.NuggetCommentToken),
+                NuggetParser.Context.SourceProcessing);
         }
 
     #region [INuggetLocalizer]
@@ -24,9 +38,7 @@ namespace i18n
         public string ProcessNuggets(string entity, LanguageItem[] languages)
         {
            // Lookup any/all msgid nuggets in the entity and replace with any translated message.
-            NuggetTokens nuggetTokens = new NuggetTokens("[[[", "]]]", "|||", "///");
-            NuggetParser nuggetParser = new NuggetParser(nuggetTokens);
-            string entityOut = nuggetParser.ParseString(entity, delegate(string nuggetString, int pos, Nugget nugget, string i_entity)
+            string entityOut = _nuggetParser.ParseString(entity, delegate(string nuggetString, int pos, Nugget nugget, string i_entity)
             {
             // Formatted nuggets:
             //
@@ -47,10 +59,10 @@ namespace i18n
                 LanguageTag lt;
                 string message;
                // Check for unit-test caller.
-                if (m_textLocalizer == null) {
+                if (_textLocalizer == null) {
                     return "test.message"; }
                // Lookup resource using canonical msgid.
-				message = m_textLocalizer.GetText(nugget.MsgId, languages, out lt) ?? nugget.MsgId;
+				message = _textLocalizer.GetText(HttpUtility.HtmlDecode(nugget.MsgId), HttpUtility.HtmlDecode(nugget.Comment), languages, out lt) ?? nugget.MsgId;
                //
                 if (nugget.IsFormatted) {
                    // Convert any identifies in a formatted nugget: %0 -> {0}

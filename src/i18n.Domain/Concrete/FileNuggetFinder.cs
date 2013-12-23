@@ -23,7 +23,8 @@ namespace i18n.Domain.Concrete
 			    _settings.NuggetBeginToken,
 			    _settings.NuggetEndToken,
 			    _settings.NuggetDelimiterToken,
-			    _settings.NuggetCommentToken));
+			    _settings.NuggetCommentToken),
+                NuggetParser.Context.SourceProcessing);
 		}
 
 		/// <summary>
@@ -49,7 +50,7 @@ namespace i18n.Domain.Concrete
 					currentFullPath = Path.GetDirectoryName(Path.GetFullPath(filePath));
 					foreach (var blackItem in _settings.BlackList)
 					{
-						if (currentFullPath == null || currentFullPath.StartsWith(blackItem))
+						if (currentFullPath == null || currentFullPath.StartsWith(blackItem, StringComparison.OrdinalIgnoreCase))
 						{
 							//this is a file that is under a blacklisted directory so we do not parse it.
 							blacklistFound = true;
@@ -120,14 +121,16 @@ namespace i18n.Domain.Concrete
 			string reference = filePath + ":" + lineNumber.ToString();
             string msgid = nugget.MsgId.Replace("\r\n", "\n").Replace("\r", "\\n");
                 // NB: In memory msgids are normalized so that LFs are converted to "\n" char sequence.
+            string key = TemplateItem.KeyFromMsgidAndComment(msgid, nugget.Comment, _settings.MessageContextEnabledFromComment);
 			List<string> tmpList;
            //
             templateItems.AddOrUpdate(
-                msgid, 
+                key,
                 // Add routine.
                 k => {
 			        TemplateItem item = new TemplateItem();
-			        item.Id = msgid;
+                    item.MsgKey = key;
+			        item.MsgId = msgid;
 
 			        tmpList = new List<string>();
 			        tmpList.Add(reference);

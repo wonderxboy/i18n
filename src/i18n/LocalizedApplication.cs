@@ -15,8 +15,14 @@ namespace i18n
     public class LocalizedApplication : IRootServices
     {
 
-    #region [IApplicationServices]
+    #region [IRootServices]
 
+        public IUrlLocalizer UrlLocalizerForApp
+        {
+            get {
+                return m_cached_urlLocalizer.Get(() => UrlLocalizerService);
+            }
+        }
         public ITextLocalizer TextLocalizerForApp
         {
             get {
@@ -39,10 +45,15 @@ namespace i18n
     #endregion
 
         /// <summary>
-        /// The default language for all localized keys; when a PO database
-        /// is built, the default key file is stored at this locale location.
+        /// The language to be used as the default for the application where no
+        /// explicit language is specified or determined for a request. Defaults to "en".
         /// </summary>
         /// <remarks>
+        /// When MessageKeyIsValueInDefaultLanguage is true, GetText may interpret
+        /// the message keys to be message values in the DefaultLanguage (where
+        /// no explicit message value is defined in the DefaultLanguage) and so
+        /// output the message key.<br/>
+        /// The DefaultLanguage is used in Url Localization Scheme2 for the default URL.<br/>
         /// Supports a subset of BCP 47 language tag spec corresponding to the Windows
         /// support for language names, namely the following subtags:
         ///     language (mandatory, 2 alphachars)
@@ -66,6 +77,38 @@ namespace i18n
             }
         }
         public LanguageTag DefaultLanguageTag { get; set; }
+
+        /// <summary>
+        /// Specifies whether the key for a message may be assumed to be the value for
+        /// the message in the default language. Defaults to true.
+        /// </summary>
+        /// <remarks>
+        /// When true, the i18n GetText method will take it that a translation exists
+        /// for all messages in the default language, even though in reality a translation
+        /// is not present for the message in the default language's PO file.<br/>
+        /// When false, an explicit translation is required in the default language. Typically
+        /// this can be useful where key are not strings to be output but rather codes or mnemonics
+        /// of some kind.
+        /// </remarks>
+        public bool MessageKeyIsValueInDefaultLanguage { get; set; }
+
+        /// <summary>
+        /// The ASP.NET application's virtual application root path on the server,
+        /// used by Url Localization.
+        /// </summary>
+        /// <remarks>
+        /// This is set by the ctor automatically to the ApplicationPath of
+        /// HttpContext.Current, when available. Should that not be available
+        /// then the value defaults to "/".<br/>
+        /// In situations where the application is configured to run under a virtual folder
+        /// and you init this class in such a way that HttpContext.Current is not
+        /// available, it will be necessary to set this correctly manually to the application
+        /// root path.<br/>
+        /// E.g. if the application root url is "example.com/MySite",
+        /// set this to "/MySite". It is important that the string starts with a forward slash path separator
+        /// and does NOT end with a forward slash.
+        /// </remarks>
+        public string ApplicationPath { get; set; }
 
         /// <summary>
         /// Declares a method type for handling the setting of the language.
@@ -97,19 +140,39 @@ namespace i18n
         /// Regular expression that controls the ContextTypes elligible for Late URL Localization.
         /// </summary>
         /// <remarks>
-        /// Set to null to disable Late URL Localization. Defaults to text/html and 
-        /// application/javascript. Client may customise this member, for instance in Application_Start.
-        /// This feature requires the LocalizedModule HTTP module to be intalled in web.config.
+        /// Set to null to disable Late URL Localization.<br/>
+        /// Defaults to @"^(?:(?:(?:text|application)/(?:plain|html|xml|javascript|json))(?:\s*;.*)?)$").<br/>
+        /// Client may customise this member, for instance in Application_Start.<br/>
+        /// This feature requires the LocalizedModule HTTP module to be intalled in web.config.<br/>
+        /// Explanation of the default regex:<br/>
+        ///  Content-type string must begin with "text" or "application"<br/>
+        ///  This must be followed by "/"<br/>
+        ///  This must be followed by "plain" or "html" ...<br/>
+        ///  And finally this may be followed by the following sequence:<br/>
+        ///      zero or more whitespace then ";" then any number of any chars up to end of string.
         /// </remarks>
-        public Regex ContentTypesToLocalize = new Regex("^(?:text/html|application/javascript)$");
-
+        public Regex ContentTypesToLocalize = new Regex(@"^(?:(?:(?:text|application)/(?:plain|html|xml|javascript|x-javascript|json|x-json))(?:\s*;.*)?)$");
         public LocalizedApplication()
         {
             Container = new Container();
 
             // Default settings.
             DefaultLanguage = ("en");
+            MessageKeyIsValueInDefaultLanguage = true;
             PermanentRedirects = false;
+
+            // Attempt to determine ApplicationPath.
+            // NB: if this method being called outside of a request handler, HttpContext.Current
+            // fails. Normally, this results in a null being returned; however it has been observed
+            // that it can also throw.
+            try {
+                var mycontext = HttpContext.Current;
+                if(mycontext!=null && mycontext.Request.ApplicationPath != null)
+                    ApplicationPath = mycontext.Request.ApplicationPath.TrimEnd('/');
+            }
+            catch(Exception) {}
+            if (String.IsNullOrWhiteSpace(ApplicationPath)) {
+                ApplicationPath = "/"; }
 
             // Register default services.
             // The client app may subsequerntly override any of these.
@@ -117,9 +180,9 @@ namespace i18n
             // creating the services instances.
             Container.Register<ITranslationRepository>(r => new POTranslationRepository(new i18nSettings(new WebConfigSettingService(null)))); 
             Container.Register<IUrlLocalizer>(r => new UrlLocalizer());
-            Container.Register<ITextLocalizer>(r => new TextLocalizer(TranslationRepositoryService)); 
+            Container.Register<ITextLocalizer>(r => new TextLocalizer(new i18nSettings(new WebConfigSettingService(null)), TranslationRepositoryService)); 
             Container.Register<IEarlyUrlLocalizer>(r => new EarlyUrlLocalizer(UrlLocalizerService));
-            Container.Register<INuggetLocalizer>(r => new NuggetLocalizer(TextLocalizerForApp));
+            Container.Register<INuggetLocalizer>(r => new NuggetLocalizer(new i18nSettings(new WebConfigSettingService(null)), TextLocalizerForApp));
                 // TextLocalizerForApp = re-use any cached TextLocalizer already instantiated.
                 // This prevents NuggetLocalizer using a different TextLocalizer instance from
                 // a client which calls TextLocalizerForApp directly. While it is dangerous to do this
@@ -142,9 +205,10 @@ namespace i18n
         public static LocalizedApplication Current = new LocalizedApplication();
         
         private Container Container { get; set; }
-        private LockFreeProperty<ITextLocalizer> m_cached_textLocalizer = new LockFreeProperty<ITextLocalizer>();
+        private LockFreeProperty<IUrlLocalizer     > m_cached_urlLocalizer      = new LockFreeProperty<IUrlLocalizer>();
+        private LockFreeProperty<ITextLocalizer    > m_cached_textLocalizer     = new LockFreeProperty<ITextLocalizer>();
         private LockFreeProperty<IEarlyUrlLocalizer> m_cached_earlyUrlLocalizer = new LockFreeProperty<IEarlyUrlLocalizer>();
-        private LockFreeProperty<INuggetLocalizer> m_cached_nuggetLocalizer = new LockFreeProperty<INuggetLocalizer>();
+        private LockFreeProperty<INuggetLocalizer  > m_cached_nuggetLocalizer   = new LockFreeProperty<INuggetLocalizer>();
 
         /// <summary>
         /// Helper for clearing the cached-allocated per-appdomain services maintained by this class.
