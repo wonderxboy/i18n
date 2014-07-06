@@ -345,6 +345,8 @@ Language (PAL) for the request.
 
 The PAL for the request is determined by the first of the following conditions that is met:
 
+For i18n.UrlLocalizationScheme.Scheme1:
+
 1. The path component of the URL is prefixed with a language tag that matches *exactly* one of the application languages. E.g. "example.com/fr/account/signup".
 
 2. The path component of the URL is prefixed with a language tag that matches *loosely* one of the application languages (see below).
@@ -353,7 +355,15 @@ The PAL for the request is determined by the first of the following conditions t
 
 4. The request contains an Accept-Language header with a language that matches (exactly or loosely) one of the application languages.
 
-5. The default application language is selected.
+5. The default application language is selected (see also [Per-Request Default Language Determination](#per-request-default-language-determination)).
+
+For i18n.UrlLocalizationScheme.Scheme2:
+
+1. The path component of the URL is prefixed with a language tag that matches *exactly* one of the application languages. E.g. "example.com/fr/account/signup".
+
+2. The path component of the URL is prefixed with a language tag that matches *loosely* one of the application languages (see below).
+
+3. The default application language is selected (see also [Per-Request Default Language Determination](#per-request-default-language-determination)).
 
 Where a *loose* match is made above, the URL is updated with the matched application language tag
 and a redirect is issued. E.g. "example.com/fr-CA/account/signup" -> "example.com/fr/account/signup".
@@ -371,6 +381,38 @@ the current langue to the user:
         </p>
     </div>
 ```
+
+### Per-Request Default Language Determination
+
+When the PAL algorithm falls back on the default language for the application, i18n supports a
+simple delegate-based hook for providing the default language based on the current request,
+typically based on the URL.
+
+For example, suppose you wish the default language to vary as follows:
+
+1. mydomain.co.uk -> 'en'
+2. mydomain.fr -> 'fr'
+
+This can be achieved as follows:
+
+```
+    protected void Application_Start()
+    {
+        ...
+        i18n.LocalizedApplication.Current.DefaultLanguage = "en";
+        i18n.UrlLocalizer.UrlLocalizationScheme = i18n.UrlLocalizationScheme.Scheme2;
+        i18n.UrlLocalizer.DetermineDefaultLanguageFromRequest = delegate(HttpContextBase context)
+        {
+            if (context != null && context.Request.Url.Host.EndsWith(".fr", StringComparison.OrdinalIgnoreCase)) {
+                return i18n.LanguageTag.GetCachedInstance("fr"); }
+            return i18n.LocalizedApplication.Current.DefaultLanguageTag;
+        };
+    }
+```
+
+Notice how the URL localization scheme has been switched to Scheme2 which allows the URL
+to be without any language tag. The default scheme (Scheme1) would enforce a redirection
+so that the URL always contains the current language tag.
 
 ### Explicit User Language Selection
 
@@ -464,17 +506,59 @@ which follows:
         }
         // Owise...delete any 'language' cookie in the client.
         else {
-            Response.Cookies["i18n.langtag"].FlagForRemoval(); }
+            var cookie = Response.Cookies["i18n.langtag"];
+            if (cookie != null) {
+                cookie.Value = null;
+                cookie.Expires = DateTime.UtcNow.AddMonths(-1);
+            }
+        }
         // Update PAL setting so that new language is reflected in any URL patched in the 
         // response (Late URL Localization).
         HttpContext.SetPrincipalAppLanguageForRequest(lt);
         // Patch in the new langtag into any return URL.
         if (returnUrl.IsSet()) {
-            returnUrl = LocalizedApplication.Current.UrlLocalizerForApp.SetLangTagInUrlPath(returnUrl, UriKind.RelativeOrAbsolute, lt == null ? null : lt.ToString()).ToString(); }
+            returnUrl = LocalizedApplication.Current.UrlLocalizerForApp.SetLangTagInUrlPath(HttpContext, returnUrl, UriKind.RelativeOrAbsolute, lt == null ? null : lt.ToString()).ToString(); }
         // Redirect user agent as approp.
-        return this.RedirectWithSubSite(returnUrl);
+        return this.Redirect(returnUrl);
     }
+
 ```
+
+### How to get a translation of a nugget in your C# code
+
+With i18n you can access the translation for a given nugget msgid from any code that is handling an ASP.NET request.
+There is a ```GetText``` extension method to HttpContextBase provided for this.
+
+For example, you can do the following from within an MVC controller action:
+
+
+```
+using System;
+using System.Web.Mvc;
+using i18n;
+
+namespace MyWebSite.Controllers
+{
+    public class MyController : Controller
+    {
+        public ActionResult Welcome()
+        {
+            string welcomeMessage = HttpContext.GetText("Welcome to the my website.", "");
+
+            // Do something with the string...
+
+            return View();
+        }
+    }
+}
+
+```
+
+Essentially, anywhere you have access to an HttpContextBase or HttpContext instance, you can get a correct
+translation for a given nugget msgid / msgcomment combo.
+
+The msgcomment is relevant only when i18n.Domain.Concrete.i18nSettings.MessageContextEnabledFromComment is set to true;
+by default it is false and so msgcomment argument should be passed as null or empty.
 
 ### Language Matching
 
@@ -501,6 +585,18 @@ the matching algorithm is efficient for managed code (lock-free and essentially 
 
 Note that the following Chinese languages tags are normalized: zh-CN to zh-Hans, and zh-TW to zh-Hant.
 It is still safe to use zh-CN and zh-TW, but internally they will be treated as equivalent to their new forms.
+
+##### Private Use Subtag
+
+The [w3c language tag spec](http://www.w3.org/International/articles/language-tags/Overview.en.php#extension) includes 
+a provision for an additional subtag for private use. This is now supported and can be used to provide a different
+translation for specific scenarios, such as a tenant on a multi-tenant application.
+
+The format is: `en-GB-x-Tenant123`, `en-x-Tenant99` etc.
+
+Note the `-x-`, after which you can add four or more alphanumeric characters to specify your custom translation.
+There must be an exact match for all subtags for this translation to be returned. If the module can't find a 
+translation for the tenant, it will match the remaining subtags according to the algorithm described above.
 
 ##### Language Matching Update
 

@@ -172,6 +172,7 @@ namespace i18n.Domain.Concrete
                //
 
 				//This is required for poedit to read the files correctly if they contains for instance swedish characters
+				stream.WriteLine("msgid \"\"");
 				stream.WriteLine("msgstr \"\"");
 				stream.WriteLine("\"Content-Type: text/plain; charset=utf-8\\n\"");
 				stream.WriteLine();
@@ -265,7 +266,21 @@ namespace i18n.Domain.Concrete
 
             using (StreamWriter stream = new StreamWriter(filePath))
 			{
-				foreach (var item in items.Values)
+               // Establish ordering of items in PO file.
+                var orderedItems = items.Values
+                    .OrderBy(x => x.References == null || x.References.Count() == 0)
+                        // Non-orphan items before orphan items.
+                    .ThenBy(x => x.MsgKey);
+                        // Then order alphanumerically.
+               //
+
+				//This is required for poedit to read the files correctly if they contains for instance swedish characters
+				stream.WriteLine("msgid \"\"");
+				stream.WriteLine("msgstr \"\"");
+				stream.WriteLine("\"Content-Type: text/plain; charset=utf-8\\n\"");
+				stream.WriteLine();
+
+				foreach (var item in orderedItems)
 				{
 					if (item.Comments != null)
 					{
@@ -281,6 +296,7 @@ namespace i18n.Domain.Concrete
 					}
 
 					stream.WriteLine("msgid \"" + escape(item.MsgId) + "\"");
+					stream.WriteLine("msgstr \"\""); // enable loading of POT file into editor e.g. PoEdit.
 					stream.WriteLine("");
 				}
 			}
@@ -429,6 +445,8 @@ namespace i18n.Domain.Concrete
 		/// <returns>Returns a TranslationItem with only key, id and message set</returns>
 		private TranslationItem ParseBody(TextReader fs, string line, List<string> extractedComments)
 		{
+            string originalLine = line;
+
 			if (string.IsNullOrEmpty(line)) {
                 return null; }
 
@@ -452,6 +470,10 @@ namespace i18n.Domain.Concrete
 				while ((line = fs.ReadLine()) != null)
 				{
 					line = RemoveCommentIfHistorical(line);
+                    if (String.IsNullOrEmpty(line))
+                    {
+                        Console.WriteLine("ERROR - line is empty. Original line: " + originalLine);
+                    }
 					if (!line.StartsWith("msgstr") && (msgid = Unquote(line)) != null)
 					{
 						sb.Append(msgid);

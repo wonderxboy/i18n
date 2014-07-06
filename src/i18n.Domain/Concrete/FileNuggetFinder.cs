@@ -18,7 +18,7 @@ namespace i18n.Domain.Concrete
 
 		public FileNuggetFinder(i18nSettings settings)
 		{
-			_settings = settings;
+            _settings = settings;
             _nuggetParser = new NuggetParser(new NuggetTokens(
 			    _settings.NuggetBeginToken,
 			    _settings.NuggetEndToken,
@@ -46,55 +46,64 @@ namespace i18n.Domain.Concrete
 			{
 				foreach (string filePath in Directory.EnumerateFiles(directoryPath, "*.*", SearchOption.AllDirectories))
 				{
+                    if (filePath.Length >= 260)
+                    {
+                        Console.WriteLine("Path too long to process. Path: " + filePath);
+                        continue;
+                    }
+
 					blacklistFound = false;
-					currentFullPath = Path.GetDirectoryName(Path.GetFullPath(filePath));
-					foreach (var blackItem in _settings.BlackList)
-					{
-						if (currentFullPath == null || currentFullPath.StartsWith(blackItem, StringComparison.OrdinalIgnoreCase))
-						{
-							//this is a file that is under a blacklisted directory so we do not parse it.
-							blacklistFound = true;
-							break;
-						}
-					}
-					if (!blacklistFound)
-					{
+                    currentFullPath = Path.GetDirectoryName(Path.GetFullPath(filePath));
+                    foreach (var blackItem in _settings.BlackList)
+                    {
+                        if (currentFullPath == null || currentFullPath.StartsWith(blackItem, StringComparison.OrdinalIgnoreCase))
+                        {
+                            //this is a file that is under a blacklisted directory so we do not parse it.
+                            blacklistFound = true;
+                            break;
+                        }
+                    }
+                    if (!blacklistFound)
+                    {
 
 
-						//we check every filePath against our white list. if it's on there in at least one form we check it.
-						foreach (var whiteListItem in fileWhiteList)
-						{
-							//We have a catch all for a filetype
-							if (whiteListItem.StartsWith("*."))
-							{
-								if (Path.GetExtension(filePath) == whiteListItem.Substring(1))
-								{
-									//we got a match
-									ParseFile(filePath, templateItems);
-									break;
-								}
-							}
-							else //a file, like myfile.js
-							{
-								if (Path.GetFileName(filePath) == whiteListItem)
-								{
-									//we got a match
-									ParseFile(filePath, templateItems);
-									break;
-								}
-							}
-						}
+                        //we check every filePath against our white list. if it's on there in at least one form we check it.
+                        foreach (var whiteListItem in fileWhiteList)
+                        {
+                            //We have a catch all for a filetype
+                            if (whiteListItem.StartsWith("*."))
+                            {
+                                if (Path.GetExtension(filePath) == whiteListItem.Substring(1))
+                                {
+                                    //we got a match
+                                    ParseFile(_settings.ProjectDirectory, filePath, templateItems);
+                                    break;
+                                }
+                            }
+                            else //a file, like myfile.js
+                            {
+                                if (Path.GetFileName(filePath) == whiteListItem)
+                                {
+                                    //we got a match
+                                    ParseFile(_settings.ProjectDirectory, filePath, templateItems);
+                                    break;
+                                }
+                            }
+                        }
 
-					}
-
+                    }
 				}
 			}
 
 			return templateItems;
 		}
 
-		private void ParseFile(string filePath, ConcurrentDictionary<string, TemplateItem> templateItems)
+		private void ParseFile(string projectDirectory, string filePath, ConcurrentDictionary<string, TemplateItem> templateItems)
         {
+            var referencePath = (projectDirectory != null) && filePath.StartsWith(projectDirectory, StringComparison.OrdinalIgnoreCase)
+                ? filePath.Substring(projectDirectory.Length + 1)
+                : filePath;
+
             DebugHelpers.WriteLine("FileNuggetFinder.ParseFile -- {0}", filePath);
            // Lookup any/all nuggets in the file and for each add a new template item.
 			using (var fs = File.OpenText(filePath))
@@ -102,7 +111,7 @@ namespace i18n.Domain.Concrete
                 _nuggetParser.ParseString(fs.ReadToEnd(), delegate(string nuggetString, int pos, Nugget nugget, string i_entity)
                 {
 				    AddNewTemplateItem(
-                        filePath, 
+                        referencePath, 
                         i_entity.LineFromPos(pos), 
                         nugget, 
                         templateItems);
